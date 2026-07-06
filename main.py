@@ -295,8 +295,8 @@ elif menu == "Add Income / Revenue":
                             name_val = str(row.iloc[1]).strip()
                             amount_val = float(row.iloc[2])
                             
-                            # Only insert if it's a valid row (not a header)
-                            if name_val and amount_val > 0 and name_val.lower() != 'name':
+                            # CRITICAL FIX: Ignore headers AND ignore any row where the name contains 'total'
+                            if name_val and amount_val > 0 and name_val.lower() != 'name' and 'total' not in name_val.lower():
                                 q_bulk = """INSERT INTO income 
                                            (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
@@ -304,9 +304,9 @@ elif menu == "Add Income / Revenue":
                                 if execute_query(q_bulk, p_bulk):
                                     success_count += 1
                         except Exception as e:
-                            continue # Skip header rows or invalid data
+                            continue # Skip header rows, invalid data, or total rows
                             
-                    st.success(f"Successfully added {success_count} records to the database!")
+                    st.success(f"Successfully added {success_count} records to the database! (Ignored 'Total' rows)")
             except Exception as e:
                 st.error("Error reading the Excel file. Please ensure it is a valid .xlsx format.")
 
