@@ -358,7 +358,7 @@ elif menu == "Voter Rights & Consistency":
     st.header("Member Consistency & Voting Rights")
     st.write("Automatically determines active status based on consecutive or multiple month contributions.")
     
-    consistency_threshold = st.slider("Months required for Voting Rights:", min_value=1, max_value=12, value=2)
+    consistency_threshold = st.slider("Months required for Voting Rights:", min_value=1, max_value=36, value=2)
     
     query = """
     SELECT 
