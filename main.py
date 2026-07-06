@@ -376,7 +376,9 @@ elif menu == "Voter Rights & Consistency":
         df['Voter Rights'] = df['Months Active'].apply(lambda x: '✅ Eligible' if x >= consistency_threshold else '🔴 Pending')
         total_eligible = len(df[df['Voter Rights'] == '✅ Eligible'])
         st.metric("Total Eligible Voters", total_eligible)
-        st.dataframe(df.style.applymap(lambda x: 'color: green; font-weight:bold' if x == '✅ Eligible' else 'color: red', subset=['Voter Rights']), use_container_width=True)
+        
+        # FIX: Changed 'applymap' to 'map' to support the newest version of Pandas in the Cloud
+        st.dataframe(df.style.map(lambda x: 'color: green; font-weight:bold' if x == '✅ Eligible' else 'color: red', subset=['Voter Rights']), use_container_width=True)
     else:
         st.info("No income records found to calculate consistency.")
 
