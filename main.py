@@ -61,7 +61,6 @@ if 'inc_address' not in st.session_state: st.session_state.inc_address = ""
 if 'exp_address' not in st.session_state: st.session_state.exp_address = ""
 
 def fetch_address_from_api(pincode):
-    # 1. OFFLINE FALLBACK DICTIONARY
     offline_pincodes = {
         "641601": "Tiruppur North, Tiruppur, Tamil Nadu",
         "641602": "Tiruppur Bazaar, Tiruppur, Tamil Nadu",
@@ -76,7 +75,6 @@ def fetch_address_from_api(pincode):
     if str(pincode) in offline_pincodes:
         return f"{offline_pincodes[str(pincode)]} - {pincode}"
 
-    # 2. IF NOT IN OFFLINE DICTIONARY, TRY INTERNET
     if len(str(pincode)) == 6 and str(pincode).isdigit():
         try:
             response = requests.get(f"https://api.postalpincode.in/pincode/{pincode}", timeout=3)
@@ -199,50 +197,114 @@ if menu == "Dashboard Overview":
     else:
         st.info("Insufficient data for monthly trend charts.")
 
+    st.markdown("---")
+    st.subheader("Category-wise Distribution")
+    
+    col_pie1, col_pie2 = st.columns(2)
+    
+    with col_pie1:
+        inc_cat = run_query("SELECT category, SUM(amount) as total FROM income GROUP BY category")
+        if not inc_cat.empty:
+            fig_inc_pie = go.Figure(data=[go.Pie(labels=inc_cat['category'], values=inc_cat['total'], hole=0.4, textinfo='percent', hoverinfo='label+percent+value', marker=dict(colors=['#4caf50', '#81c784', '#a5d6a7', '#c8e6c9', '#2e7d32', '#1b5e20']))])
+            fig_inc_pie.update_layout(title_text="Income Sources", title_x=0.25, margin=dict(t=40, b=10, l=10, r=10), showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
+            st.plotly_chart(fig_inc_pie, use_container_width=True)
+        else:
+            st.info("No income data for category chart.")
+            
+    with col_pie2:
+        exp_cat = run_query("SELECT category, SUM(amount) as total FROM expenditure GROUP BY category")
+        if not exp_cat.empty:
+            fig_exp_pie = go.Figure(data=[go.Pie(labels=exp_cat['category'], values=exp_cat['total'], hole=0.4, textinfo='percent', hoverinfo='label+percent+value', marker=dict(colors=['#f44336', '#e57373', '#ffcdd2', '#d32f2f', '#b71c1c']))])
+            fig_exp_pie.update_layout(title_text="Expenditure Breakdown", title_x=0.25, margin=dict(t=40, b=10, l=10, r=10), showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
+            st.plotly_chart(fig_exp_pie, use_container_width=True)
+        else:
+            st.info("No expenditure data for category chart.")
+
 # ==========================================
-# 2. Add Income Module
+# 2. Add Income Module (With CSV Upload)
 # ==========================================
 elif menu == "Add Income / Revenue":
     st.header("Register New Income")
     
-    col1, col2 = st.columns(2)
-    date = col1.date_input("Transaction Date")
-    name = col2.text_input("Name of Donor / Member")
+    tab_manual, tab_bulk = st.tabs(["✍️ Manual Entry", "📁 Bulk CSV Upload"])
     
-    father_name = col1.text_input("Father's Name")
-    
-    pin_col, btn_col = col2.columns([3, 1])
-    pincode = pin_col.text_input("Pincode", max_chars=6, key="inc_pincode")
-    
-    if btn_col.button("Fetch", key="btn_inc_fetch"):
-        result = fetch_address_from_api(pincode)
-        if result == "INVALID": st.error("Invalid Pincode.")
-        elif result == "OFFLINE": st.warning("No internet. Type address manually.")
-        else:
-            st.session_state.inc_address = result
-            st.success("Address found!")
+    # --- MANUAL ENTRY TAB ---
+    with tab_manual:
+        col1, col2 = st.columns(2)
+        date = col1.date_input("Transaction Date")
+        name = col2.text_input("Name of Donor / Member")
+        
+        father_name = col1.text_input("Father's Name")
+        pin_col, btn_col = col2.columns([3, 1])
+        pincode = pin_col.text_input("Pincode", max_chars=6, key="inc_pincode")
+        
+        if btn_col.button("Fetch", key="btn_inc_fetch"):
+            result = fetch_address_from_api(pincode)
+            if result == "INVALID": st.error("Invalid Pincode.")
+            elif result == "OFFLINE": st.warning("No internet. Type address manually.")
+            else:
+                st.session_state.inc_address = result
+                st.success("Address found!")
+                
+        address = st.text_area("Address (Editable)", key="inc_address")
+        
+        col3, col4, col5 = st.columns(3)
+        category = col3.selectbox("Income Category", ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund'])
+        amount = col4.number_input("Amount (₹)", min_value=0.0, step=100.0)
+        payment_mode = col5.selectbox("Payment Mode", ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque'])
+        
+        col6, col7 = st.columns(2)
+        reference_no = col6.text_input("Treasurer Ref / Cheque No. (Optional)")
+        remarks = col7.text_area("Remarks", height=68)
+        
+        if st.button("Save Income Record", type="primary"):
+            if name and amount > 0:
+                query = """INSERT INTO income 
+                           (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                params = (date, name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks)
+                if execute_query(query, params):
+                    st.success(f"Recorded ₹{amount} from {name}. Reference: {reference_no}")
+                    st.session_state.inc_address = "" 
+            else: st.error("Provide a valid Name and Amount.")
+
+    # --- BULK CSV UPLOAD TAB ---
+    with tab_bulk:
+        st.write("Upload a CSV file to add multiple members at once. Required format: **Col 1 (Sl No), Col 2 (Name), Col 3 (Amount)**.")
+        
+        col_b1, col_b2, col_b3 = st.columns(3)
+        bulk_date = col_b1.date_input("Master Date for these entries")
+        bulk_cat = col_b2.selectbox("Master Category", ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund'], key="bulk_cat")
+        bulk_mode = col_b3.selectbox("Master Payment Mode", ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque'], key="bulk_mode")
+        
+        uploaded_file = st.file_uploader("Upload CSV File", type=['csv'])
+        
+        if uploaded_file is not None:
+            # Read CSV assuming no header or handle header dynamically
+            df_csv = pd.read_csv(uploaded_file, header=None)
+            st.write("Data Preview:")
+            st.dataframe(df_csv.head(3))
             
-    address = st.text_area("Address (Editable)", key="inc_address")
-    
-    col3, col4, col5 = st.columns(3)
-    category = col3.selectbox("Income Category", ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund'])
-    amount = col4.number_input("Amount (₹)", min_value=0.0, step=100.0)
-    payment_mode = col5.selectbox("Payment Mode", ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque'])
-    
-    col6, col7 = st.columns(2)
-    reference_no = col6.text_input("Treasurer Ref / Cheque No. (Optional)")
-    remarks = col7.text_area("Remarks", height=68)
-    
-    if st.button("Save Income Record", type="primary"):
-        if name and amount > 0:
-            query = """INSERT INTO income 
-                       (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-            params = (date, name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks)
-            if execute_query(query, params):
-                st.success(f"Recorded ₹{amount} from {name}. Reference: {reference_no}")
-                st.session_state.inc_address = "" 
-        else: st.error("Provide a valid Name and Amount.")
+            if st.button("Upload and Save to Database", type="primary"):
+                success_count = 0
+                for index, row in df_csv.iterrows():
+                    try:
+                        # Index 1 is Name, Index 2 is Amount (Ignoring Index 0 / SlNo)
+                        name_val = str(row.iloc[1]).strip()
+                        amount_val = float(row.iloc[2])
+                        
+                        # Only insert if it's a valid row
+                        if name_val and amount_val > 0:
+                            q_bulk = """INSERT INTO income 
+                                       (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
+                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                            p_bulk = (bulk_date, name_val, "", "", "", bulk_cat, amount_val, bulk_mode, "", "Bulk CSV Upload")
+                            if execute_query(q_bulk, p_bulk):
+                                success_count += 1
+                    except Exception as e:
+                        continue # Skip header rows or invalid data
+                        
+                st.success(f"Successfully added {success_count} records to the database!")
 
 # ==========================================
 # 3. Add Expenditure Module
@@ -255,7 +317,6 @@ elif menu == "Add Expenditure / Spend":
     name = col2.text_input("Recipient / Beneficiary Name")
     
     father_name = col1.text_input("Father's Name / Guardian")
-    
     pin_col, btn_col = col2.columns([3, 1])
     pincode = pin_col.text_input("Pincode", max_chars=6, key="exp_pincode")
     
@@ -273,7 +334,6 @@ elif menu == "Add Expenditure / Spend":
     category = col3.selectbox("Expenditure Category", ['Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor family fund'])
     amount = col4.number_input("Amount (₹)", min_value=0.0, step=100.0)
     reference_no = col5.text_input("Treasurer Ref / Cheque No. (Required for Bank/Tally)")
-    
     remarks = st.text_area("Detailed Reasons (Crucial for high amounts)")
     
     if st.button("Save Expenditure Record", type="primary"):
@@ -317,11 +377,10 @@ elif menu == "Voter Rights & Consistency":
         st.info("No income records found to calculate consistency.")
 
 # ==========================================
-# 5. Detailed Reports Module (With Delete Function)
+# 5. Detailed Reports Module (With EDIT/DELETE Function)
 # ==========================================
 elif menu == "Detailed Reports & Filters":
     st.header("Advanced Reports & Analytics")
-    
     tab1, tab2 = st.tabs(["📊 Income Tally & Search", "🧾 Expenditure Management"])
     
     # ------------------ INCOME TAB ------------------
@@ -346,25 +405,47 @@ elif menu == "Detailed Reports & Filters":
             if sel_cat != "All": filtered_inc = filtered_inc[filtered_inc['category'] == sel_cat]
             if sel_month != "All": filtered_inc = filtered_inc[filtered_inc['Month'] == sel_month]
             
-            # Display Table
             filtered_inc_display = filtered_inc.drop(columns=['Month'])
             st.dataframe(filtered_inc_display, use_container_width=True)
             st.markdown(f"**Filtered Total: ₹ {filtered_inc['amount'].sum():,.2f}**")
             
-            # --- Delete Section for Income ---
-            with st.expander("🗑️ Danger Zone: Delete Income Record"):
-                st.warning("Warning: Deleted records cannot be recovered.")
+            # --- Edit / Delete Section for Income ---
+            with st.expander("✏️ Manage Records (Edit / Delete)"):
                 if not filtered_inc.empty:
-                    # Create a friendly dictionary for the selectbox display
                     inc_options = {row['id']: f"ID: {row['id']} | {row['person_name']} | ₹{row['amount']} | Date: {row['transaction_date']}" for index, row in filtered_inc.iterrows()}
+                    selected_inc_id = st.selectbox("Select Record", options=list(inc_options.keys()), format_func=lambda x: inc_options[x], key="edit_inc_select")
                     
-                    selected_inc_id = st.selectbox("Select Record to Delete", options=list(inc_options.keys()), format_func=lambda x: inc_options[x], key="del_inc_select")
-                    
-                    if st.button("Delete Selected Income Record", type="primary", key="del_inc_btn"):
-                        if execute_query("DELETE FROM income WHERE id = %s", (selected_inc_id,)):
-                            st.success(f"Record ID {selected_inc_id} deleted successfully!")
-                            time.sleep(1) # Brief pause so the user sees the success message
-                            st.rerun() # Refresh the page immediately
+                    if selected_inc_id:
+                        sel_row = filtered_inc[filtered_inc['id'] == selected_inc_id].iloc[0]
+                        
+                        with st.form("edit_inc_form"):
+                            st.write("Modify Details Below:")
+                            e_col1, e_col2 = st.columns(2)
+                            e_date = e_col1.date_input("Date", pd.to_datetime(sel_row['transaction_date']))
+                            e_name = e_col2.text_input("Name", str(sel_row['person_name']))
+                            
+                            cats = ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund']
+                            e_cat = e_col1.selectbox("Category", cats, index=cats.index(sel_row['category']) if sel_row['category'] in cats else 0)
+                            e_amt = e_col2.number_input("Amount", value=float(sel_row['amount']))
+                            
+                            modes = ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque']
+                            e_mode = e_col1.selectbox("Payment Mode", modes, index=modes.index(sel_row['payment_mode']) if sel_row['payment_mode'] in modes else 0)
+                            e_ref = e_col2.text_input("Ref/Cheque No", str(sel_row['reference_no']) if pd.notnull(sel_row['reference_no']) else "")
+                            
+                            if st.form_submit_button("Update Record", type="primary"):
+                                q_upd = """UPDATE income SET transaction_date=%s, person_name=%s, category=%s, amount=%s, payment_mode=%s, reference_no=%s WHERE id=%s"""
+                                if execute_query(q_upd, (e_date, e_name, e_cat, e_amt, e_mode, e_ref, selected_inc_id)):
+                                    st.success("Record Updated!")
+                                    time.sleep(1)
+                                    st.rerun()
+
+                        # Delete button separate from form
+                        st.markdown("---")
+                        if st.button("Delete Selected Income Record", type="primary"):
+                            if execute_query("DELETE FROM income WHERE id = %s", (selected_inc_id,)):
+                                st.success(f"Record Deleted!")
+                                time.sleep(1) 
+                                st.rerun() 
         else: st.info("No Income Data.")
 
     # ------------------ EXPENDITURE TAB ------------------
@@ -387,24 +468,43 @@ elif menu == "Detailed Reports & Filters":
             if sel_cat_exp != "All": filtered_exp = filtered_exp[filtered_exp['category'] == sel_cat_exp]
             if high_value_limit > 0: filtered_exp = filtered_exp[filtered_exp['amount'] >= high_value_limit]
             
-            # Display Table
             st.dataframe(filtered_exp, use_container_width=True)
             st.markdown(f"**Filtered Total Spend: ₹ {filtered_exp['amount'].sum():,.2f}**")
             
-            # --- Delete Section for Expenditure ---
-            with st.expander("🗑️ Danger Zone: Delete Expenditure Record"):
-                st.warning("Warning: Deleted records cannot be recovered.")
+            # --- Edit / Delete Section for Expenditure ---
+            with st.expander("✏️ Manage Records (Edit / Delete)"):
                 if not filtered_exp.empty:
-                    # Create a friendly dictionary for the selectbox display
                     exp_options = {row['id']: f"ID: {row['id']} | {row['recipient_name']} | ₹{row['amount']} | Date: {row['transaction_date']}" for index, row in filtered_exp.iterrows()}
+                    selected_exp_id = st.selectbox("Select Record", options=list(exp_options.keys()), format_func=lambda x: exp_options[x], key="edit_exp_select")
                     
-                    selected_exp_id = st.selectbox("Select Record to Delete", options=list(exp_options.keys()), format_func=lambda x: exp_options[x], key="del_exp_select")
-                    
-                    if st.button("Delete Selected Expenditure Record", type="primary", key="del_exp_btn"):
-                        if execute_query("DELETE FROM expenditure WHERE id = %s", (selected_exp_id,)):
-                            st.success(f"Record ID {selected_exp_id} deleted successfully!")
-                            time.sleep(1) # Brief pause so the user sees the success message
-                            st.rerun() # Refresh the page immediately
+                    if selected_exp_id:
+                        sel_exp_row = filtered_exp[filtered_exp['id'] == selected_exp_id].iloc[0]
+                        
+                        with st.form("edit_exp_form"):
+                            st.write("Modify Details Below:")
+                            ex_col1, ex_col2 = st.columns(2)
+                            ex_date = ex_col1.date_input("Date", pd.to_datetime(sel_exp_row['transaction_date']))
+                            ex_name = ex_col2.text_input("Name", str(sel_exp_row['recipient_name']))
+                            
+                            exp_cats = ['Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor family fund']
+                            ex_cat = ex_col1.selectbox("Category", exp_cats, index=exp_cats.index(sel_exp_row['category']) if sel_exp_row['category'] in exp_cats else 0)
+                            ex_amt = ex_col2.number_input("Amount", value=float(sel_exp_row['amount']))
+                            
+                            ex_ref = ex_col1.text_input("Ref/Cheque No", str(sel_exp_row['reference_no']) if pd.notnull(sel_exp_row['reference_no']) else "")
+                            
+                            if st.form_submit_button("Update Record", type="primary"):
+                                q_upd_exp = """UPDATE expenditure SET transaction_date=%s, recipient_name=%s, category=%s, amount=%s, reference_no=%s WHERE id=%s"""
+                                if execute_query(q_upd_exp, (ex_date, ex_name, ex_cat, ex_amt, ex_ref, selected_exp_id)):
+                                    st.success("Record Updated!")
+                                    time.sleep(1)
+                                    st.rerun()
+
+                        st.markdown("---")
+                        if st.button("Delete Selected Expenditure Record", type="primary"):
+                            if execute_query("DELETE FROM expenditure WHERE id = %s", (selected_exp_id,)):
+                                st.success(f"Record Deleted!")
+                                time.sleep(1) 
+                                st.rerun() 
         else: st.info("No Expenditure Data.")
 
 # ==========================================
