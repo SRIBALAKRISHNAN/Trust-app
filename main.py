@@ -221,12 +221,12 @@ if menu == "Dashboard Overview":
             st.info("No expenditure data for category chart.")
 
 # ==========================================
-# 2. Add Income Module (With CSV Upload)
+# 2. Add Income Module (With Excel Upload)
 # ==========================================
 elif menu == "Add Income / Revenue":
     st.header("Register New Income")
     
-    tab_manual, tab_bulk = st.tabs(["✍️ Manual Entry", "📁 Bulk CSV Upload"])
+    tab_manual, tab_bulk = st.tabs(["✍️ Manual Entry", "📁 Bulk Excel Upload"])
     
     # --- MANUAL ENTRY TAB ---
     with tab_manual:
@@ -268,43 +268,47 @@ elif menu == "Add Income / Revenue":
                     st.session_state.inc_address = "" 
             else: st.error("Provide a valid Name and Amount.")
 
-    # --- BULK CSV UPLOAD TAB ---
+    # --- BULK EXCEL UPLOAD TAB ---
     with tab_bulk:
-        st.write("Upload a CSV file to add multiple members at once. Required format: **Col 1 (Sl No), Col 2 (Name), Col 3 (Amount)**.")
+        st.write("Upload an **Excel file (.xlsx or .xls)** to add multiple members at once. Required format: **Col 1 (Sl No), Col 2 (Name), Col 3 (Amount)**.")
         
         col_b1, col_b2, col_b3 = st.columns(3)
         bulk_date = col_b1.date_input("Master Date for these entries")
         bulk_cat = col_b2.selectbox("Master Category", ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund'], key="bulk_cat")
         bulk_mode = col_b3.selectbox("Master Payment Mode", ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque'], key="bulk_mode")
         
-        uploaded_file = st.file_uploader("Upload CSV File", type=['csv'])
+        # Changed 'csv' to 'xlsx' and 'xls'
+        uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls'])
         
         if uploaded_file is not None:
-            # Read CSV assuming no header or handle header dynamically
-            df_csv = pd.read_csv(uploaded_file, header=None)
-            st.write("Data Preview:")
-            st.dataframe(df_csv.head(3))
-            
-            if st.button("Upload and Save to Database", type="primary"):
-                success_count = 0
-                for index, row in df_csv.iterrows():
-                    try:
-                        # Index 1 is Name, Index 2 is Amount (Ignoring Index 0 / SlNo)
-                        name_val = str(row.iloc[1]).strip()
-                        amount_val = float(row.iloc[2])
-                        
-                        # Only insert if it's a valid row
-                        if name_val and amount_val > 0:
-                            q_bulk = """INSERT INTO income 
-                                       (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
-                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-                            p_bulk = (bulk_date, name_val, "", "", "", bulk_cat, amount_val, bulk_mode, "", "Bulk CSV Upload")
-                            if execute_query(q_bulk, p_bulk):
-                                success_count += 1
-                    except Exception as e:
-                        continue # Skip header rows or invalid data
-                        
-                st.success(f"Successfully added {success_count} records to the database!")
+            # Read Excel instead of CSV
+            try:
+                df_excel = pd.read_excel(uploaded_file, header=None)
+                st.write("Data Preview:")
+                st.dataframe(df_excel.head(3))
+                
+                if st.button("Upload and Save to Database", type="primary"):
+                    success_count = 0
+                    for index, row in df_excel.iterrows():
+                        try:
+                            # Index 1 is Name, Index 2 is Amount (Ignoring Index 0 / SlNo)
+                            name_val = str(row.iloc[1]).strip()
+                            amount_val = float(row.iloc[2])
+                            
+                            # Only insert if it's a valid row (not a header)
+                            if name_val and amount_val > 0 and name_val.lower() != 'name':
+                                q_bulk = """INSERT INTO income 
+                                           (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
+                                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                                p_bulk = (bulk_date, name_val, "", "", "", bulk_cat, amount_val, bulk_mode, "", "Bulk Excel Upload")
+                                if execute_query(q_bulk, p_bulk):
+                                    success_count += 1
+                        except Exception as e:
+                            continue # Skip header rows or invalid data
+                            
+                    st.success(f"Successfully added {success_count} records to the database!")
+            except Exception as e:
+                st.error("Error reading the Excel file. Please ensure it is a valid .xlsx format.")
 
 # ==========================================
 # 3. Add Expenditure Module
@@ -439,7 +443,6 @@ elif menu == "Detailed Reports & Filters":
                                     time.sleep(1)
                                     st.rerun()
 
-                        # Delete button separate from form
                         st.markdown("---")
                         if st.button("Delete Selected Income Record", type="primary"):
                             if execute_query("DELETE FROM income WHERE id = %s", (selected_inc_id,)):
