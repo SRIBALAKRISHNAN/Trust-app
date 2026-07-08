@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 from mysql.connector import Error
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import requests
 import plotly.graph_objects as go
@@ -140,13 +140,15 @@ if 'splash_shown' not in st.session_state:
 # ==========================================
 # Main App Header
 # ==========================================
-col1, col2 = st.columns([1, 4])
+col1, col2,col3 = st.columns([1, 4, 1 ])
 with col1:
     try: st.image("logo.jpg", width=120)
     except: pass
 with col2:
     st.title("Savarangadu Ours Family Welfare Trust")
     st.markdown("##### Centralized Revenue, Expenditure & Member Management")
+with col3:
+        filter_type = st.selectbox("Select Date Filter", ["All Time", "Custom Date Range"])
 
 st.markdown("---")
 
@@ -160,13 +162,33 @@ menu = st.sidebar.radio("Navigation Menu", [
 ])
 
 # ==========================================
-# 1. Dashboard Module
+# 1. Dashboard Module 
 # ==========================================
-if menu == "Dashboard Overview":
-    st.header("Financial Dashboard")
+if menu == "Dashboard Overview": 
+    date_clause = ""
+    params = None
     
-    total_inc = run_query("SELECT SUM(amount) as total FROM income")['total'][0] or 0.0
-    total_exp = run_query("SELECT SUM(amount) as total FROM expenditure")['total'][0] or 0.0
+    if filter_type == "Custom Date Range":
+        col_d1, col_d2 = st.columns(2)
+        # Default to the first day of the current month
+        start_of_month = datetime.today().replace(day=1)
+        start_date = col_d1.date_input("Start Date", start_of_month)
+        end_date = col_d2.date_input("End Date", datetime.today())
+        
+        if start_date <= end_date:
+            date_clause = " WHERE transaction_date >= %s AND transaction_date <= %s"
+            params = (start_date, end_date)
+        else:
+            st.error("Error: Start Date must be before or equal to End Date.")
+            
+    st.markdown("---")
+    
+    # Apply date filter to Metrics
+    total_inc_df = run_query(f"SELECT SUM(amount) as total FROM income{date_clause}", params)
+    total_exp_df = run_query(f"SELECT SUM(amount) as total FROM expenditure{date_clause}", params)
+    
+    total_inc = total_inc_df['total'][0] if not total_inc_df.empty and pd.notnull(total_inc_df['total'][0]) else 0.0
+    total_exp = total_exp_df['total'][0] if not total_exp_df.empty and pd.notnull(total_exp_df['total'][0]) else 0.0
     balance = float(total_inc) - float(total_exp)
     
     col1, col2, col3 = st.columns(3)
@@ -177,8 +199,9 @@ if menu == "Dashboard Overview":
     st.markdown("---")
     st.subheader("Month-wise Financial Tally")
     
-    inc_monthly = run_query("SELECT DATE_FORMAT(transaction_date, '%Y-%m') as Month, SUM(amount) as Income FROM income GROUP BY Month")
-    exp_monthly = run_query("SELECT DATE_FORMAT(transaction_date, '%Y-%m') as Month, SUM(amount) as Expenditure FROM expenditure GROUP BY Month")
+    # Apply date filter to Bar Chart
+    inc_monthly = run_query(f"SELECT DATE_FORMAT(transaction_date, '%Y-%m') as Month, SUM(amount) as Income FROM income{date_clause} GROUP BY Month", params)
+    exp_monthly = run_query(f"SELECT DATE_FORMAT(transaction_date, '%Y-%m') as Month, SUM(amount) as Expenditure FROM expenditure{date_clause} GROUP BY Month", params)
     
     if not inc_monthly.empty or not exp_monthly.empty:
         if inc_monthly.empty: inc_monthly = pd.DataFrame(columns=['Month', 'Income'])
@@ -195,30 +218,32 @@ if menu == "Dashboard Overview":
         fig.update_layout(barmode='group', hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Month", yaxis_title="Amount (₹)")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Insufficient data for monthly trend charts.")
+        st.info("Insufficient data for monthly trend charts in this date range.")
 
     st.markdown("---")
     st.subheader("Category-wise Distribution")
     
     col_pie1, col_pie2 = st.columns(2)
     
+    # Apply date filter to Income Pie Chart
     with col_pie1:
-        inc_cat = run_query("SELECT category, SUM(amount) as total FROM income GROUP BY category")
+        inc_cat = run_query(f"SELECT category, SUM(amount) as total FROM income{date_clause} GROUP BY category", params)
         if not inc_cat.empty:
             fig_inc_pie = go.Figure(data=[go.Pie(labels=inc_cat['category'], values=inc_cat['total'], hole=0.4, textinfo='percent', hoverinfo='label+percent+value', marker=dict(colors=['#4caf50', '#81c784', '#a5d6a7', '#c8e6c9', '#2e7d32', '#1b5e20']))])
             fig_inc_pie.update_layout(title_text="Income Sources", title_x=0.25, margin=dict(t=40, b=10, l=10, r=10), showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
             st.plotly_chart(fig_inc_pie, use_container_width=True)
         else:
-            st.info("No income data for category chart.")
+            st.info("No income data for category chart in this date range.")
             
+    # Apply date filter to Expenditure Pie Chart
     with col_pie2:
-        exp_cat = run_query("SELECT category, SUM(amount) as total FROM expenditure GROUP BY category")
+        exp_cat = run_query(f"SELECT category, SUM(amount) as total FROM expenditure{date_clause} GROUP BY category", params)
         if not exp_cat.empty:
             fig_exp_pie = go.Figure(data=[go.Pie(labels=exp_cat['category'], values=exp_cat['total'], hole=0.4, textinfo='percent', hoverinfo='label+percent+value', marker=dict(colors=['#f44336', '#e57373', '#ffcdd2', '#d32f2f', '#b71c1c']))])
             fig_exp_pie.update_layout(title_text="Expenditure Breakdown", title_x=0.25, margin=dict(t=40, b=10, l=10, r=10), showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
             st.plotly_chart(fig_exp_pie, use_container_width=True)
         else:
-            st.info("No expenditure data for category chart.")
+            st.info("No expenditure data for category chart in this date range.")
 
 # ==========================================
 # 2. Add Income Module (With Excel Upload)
@@ -277,11 +302,9 @@ elif menu == "Add Income / Revenue":
         bulk_cat = col_b2.selectbox("Master Category", ['Monthly subscription', 'Donation', 'Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor fund'], key="bulk_cat")
         bulk_mode = col_b3.selectbox("Master Payment Mode", ['UPI/GPay/Paytm', 'Bank Transfer', 'Cash', 'Cheque'], key="bulk_mode")
         
-        # Changed 'csv' to 'xlsx' and 'xls'
         uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls'])
         
         if uploaded_file is not None:
-            # Read Excel instead of CSV
             try:
                 df_excel = pd.read_excel(uploaded_file, header=None)
                 st.write("Data Preview:")
@@ -291,11 +314,9 @@ elif menu == "Add Income / Revenue":
                     success_count = 0
                     for index, row in df_excel.iterrows():
                         try:
-                            # Index 1 is Name, Index 2 is Amount (Ignoring Index 0 / SlNo)
                             name_val = str(row.iloc[1]).strip()
                             amount_val = float(row.iloc[2])
                             
-                            # CRITICAL FIX: Ignore headers AND ignore any row where the name contains 'total'
                             if name_val and amount_val > 0 and name_val.lower() != 'name' and 'total' not in name_val.lower():
                                 q_bulk = """INSERT INTO income 
                                            (transaction_date, person_name, father_name, pincode, address, category, amount, payment_mode, reference_no, remarks) 
@@ -304,52 +325,96 @@ elif menu == "Add Income / Revenue":
                                 if execute_query(q_bulk, p_bulk):
                                     success_count += 1
                         except Exception as e:
-                            continue # Skip header rows, invalid data, or total rows
+                            continue 
                             
                     st.success(f"Successfully added {success_count} records to the database! (Ignored 'Total' rows)")
             except Exception as e:
                 st.error("Error reading the Excel file. Please ensure it is a valid .xlsx format.")
 
 # ==========================================
-# 3. Add Expenditure Module
+# 3. Add Expenditure Module (With Excel Upload)
 # ==========================================
 elif menu == "Add Expenditure / Spend":
     st.header("Register New Expenditure")
     
-    col1, col2 = st.columns(2)
-    date = col1.date_input("Transaction Date")
-    name = col2.text_input("Recipient / Beneficiary Name")
+    tab_manual, tab_bulk = st.tabs(["✍️ Manual Entry", "📁 Bulk Excel Upload"])
     
-    father_name = col1.text_input("Father's Name / Guardian")
-    pin_col, btn_col = col2.columns([3, 1])
-    pincode = pin_col.text_input("Pincode", max_chars=6, key="exp_pincode")
-    
-    if btn_col.button("Fetch", key="btn_exp_fetch"):
-        result = fetch_address_from_api(pincode)
-        if result == "INVALID": st.error("Invalid Pincode.")
-        elif result == "OFFLINE": st.warning("No internet. Type address manually.")
-        else:
-            st.session_state.exp_address = result
-            st.success("Address found!")
-            
-    address = st.text_area("Address (Editable)", key="exp_address")
-    
-    col3, col4, col5 = st.columns(3)
-    category = col3.selectbox("Expenditure Category", ['Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor family fund'])
-    amount = col4.number_input("Amount (₹)", min_value=0.0, step=100.0)
-    reference_no = col5.text_input("Treasurer Ref / Cheque No. (Required for Bank/Tally)")
-    remarks = st.text_area("Detailed Reasons (Crucial for high amounts)")
-    
-    if st.button("Save Expenditure Record", type="primary"):
-        if name and amount > 0:
-            query = """INSERT INTO expenditure 
-                       (transaction_date, recipient_name, father_name, pincode, address, category, amount, reference_no, remarks) 
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-            params = (date, name, father_name, pincode, address, category, amount, reference_no, remarks)
-            if execute_query(query, params):
-                st.success(f"Recorded expenditure of ₹{amount} to {name}.")
-                st.session_state.exp_address = ""
-        else: st.error("Provide a valid Recipient Name and Amount.")
+    # --- MANUAL ENTRY TAB ---
+    with tab_manual:
+        col1, col2 = st.columns(2)
+        date = col1.date_input("Transaction Date")
+        name = col2.text_input("Recipient / Beneficiary Name")
+        
+        father_name = col1.text_input("Father's Name / Guardian")
+        pin_col, btn_col = col2.columns([3, 1])
+        pincode = pin_col.text_input("Pincode", max_chars=6, key="exp_pincode")
+        
+        if btn_col.button("Fetch", key="btn_exp_fetch"):
+            result = fetch_address_from_api(pincode)
+            if result == "INVALID": st.error("Invalid Pincode.")
+            elif result == "OFFLINE": st.warning("No internet. Type address manually.")
+            else:
+                st.session_state.exp_address = result
+                st.success("Address found!")
+                
+        address = st.text_area("Address (Editable)", key="exp_address")
+        
+        col3, col4, col5 = st.columns(3)
+        category = col3.selectbox("Expenditure Category", ['Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor family fund'])
+        amount = col4.number_input("Amount (₹)", min_value=0.0, step=100.0)
+        reference_no = col5.text_input("Treasurer Ref / Cheque No. (Required for Bank/Tally)")
+        remarks = st.text_area("Detailed Reasons (Crucial for high amounts)")
+        
+        if st.button("Save Expenditure Record", type="primary"):
+            if name and amount > 0:
+                query = """INSERT INTO expenditure 
+                           (transaction_date, recipient_name, father_name, pincode, address, category, amount, reference_no, remarks) 
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                params = (date, name, father_name, pincode, address, category, amount, reference_no, remarks)
+                if execute_query(query, params):
+                    st.success(f"Recorded expenditure of ₹{amount} to {name}.")
+                    st.session_state.exp_address = ""
+            else: st.error("Provide a valid Recipient Name and Amount.")
+
+    # --- BULK EXCEL UPLOAD TAB ---
+    with tab_bulk:
+        st.write("Upload an **Excel file (.xlsx or .xls)** to add multiple expenditure records at once. Required format: **Col 1 (Sl No), Col 2 (Recipient Name), Col 3 (Amount)**.")
+        
+        col_b1, col_b2, col_b3 = st.columns(3)
+        bulk_date = col_b1.date_input("Master Date for these entries", key="exp_bulk_date")
+        bulk_cat = col_b2.selectbox("Master Category", ['Funeral fund', 'Education fund', 'Medical emergency fund', 'Poor family fund'], key="exp_bulk_cat")
+        bulk_ref = col_b3.text_input("Master Ref/Cheque No", key="exp_bulk_ref")
+        
+        uploaded_file = st.file_uploader("Upload Excel File", type=['xlsx', 'xls'], key="exp_bulk_file")
+        
+        if uploaded_file is not None:
+            try:
+                df_excel = pd.read_excel(uploaded_file, header=None)
+                st.write("Data Preview:")
+                st.dataframe(df_excel.head(3))
+                
+                if st.button("Upload and Save to Database", type="primary", key="exp_bulk_btn"):
+                    success_count = 0
+                    for index, row in df_excel.iterrows():
+                        try:
+                            name_val = str(row.iloc[1]).strip()
+                            amount_val = float(row.iloc[2])
+                            
+                            # CRITICAL FIX: Ignore headers AND ignore any row where the name contains 'total'
+                            if name_val and amount_val > 0 and name_val.lower() != 'name' and 'total' not in name_val.lower():
+                                q_bulk = """INSERT INTO expenditure 
+                                           (transaction_date, recipient_name, father_name, pincode, address, category, amount, reference_no, remarks) 
+                                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                                p_bulk = (bulk_date, name_val, "", "", "", bulk_cat, amount_val, bulk_ref, "Bulk Excel Upload")
+                                if execute_query(q_bulk, p_bulk):
+                                    success_count += 1
+                        except Exception as e:
+                            continue 
+                            
+                    st.success(f"Successfully added {success_count} records to the database! (Ignored 'Total' rows)")
+            except Exception as e:
+                st.error("Error reading the Excel file. Please ensure it is a valid .xlsx format.")
+
 
 # ==========================================
 # 4. Consistency & Voter Rights Module
@@ -358,7 +423,7 @@ elif menu == "Voter Rights & Consistency":
     st.header("Member Consistency & Voting Rights")
     st.write("Automatically determines active status based on consecutive or multiple month contributions.")
     
-    consistency_threshold = st.slider("Months required for Voting Rights:", min_value=1, max_value=36, value=2)
+    consistency_threshold = st.slider("Months required for Voting Rights:", min_value=1, max_value=12, value=2)
     
     query = """
     SELECT 
@@ -376,8 +441,6 @@ elif menu == "Voter Rights & Consistency":
         df['Voter Rights'] = df['Months Active'].apply(lambda x: '✅ Eligible' if x >= consistency_threshold else '🔴 Pending')
         total_eligible = len(df[df['Voter Rights'] == '✅ Eligible'])
         st.metric("Total Eligible Voters", total_eligible)
-        
-        # FIX: Changed 'applymap' to 'map' to support the newest version of Pandas in the Cloud
         st.dataframe(df.style.map(lambda x: 'color: green; font-weight:bold' if x == '✅ Eligible' else 'color: red', subset=['Voter Rights']), use_container_width=True)
     else:
         st.info("No income records found to calculate consistency.")
